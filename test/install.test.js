@@ -69,7 +69,8 @@ for (const [platform, arch, osName, archiveArch, extension, binaryName] of [
     assert.equal(path.basename(executable), binaryName);
     const file = await fs.lstat(executable);
     assert.equal(file.isFile(), true);
-    if (platform !== 'win32') assert.notEqual(file.mode & 0o111, 0);
+    // Windows does not expose POSIX executable bits, even for emulated targets.
+    if (platform !== 'win32' && process.platform !== 'win32') assert.notEqual(file.mode & 0o111, 0);
     assert.equal(h.calls.download.length, 2);
     assert.equal(h.calls.download[0].url,
       `https://github.com/ajimenez1503/thousandeyes-cli/releases/download/${VERSION}/thousandeyes_${VERSION}_checksums.txt`);

@@ -99,7 +99,8 @@ test('entrypoint executes the CLI safely and exposes durable report paths and te
   });
   assert.equal(result.status, 0, result.visibleLog);
   assert.equal(result.capture.script, 'synthetics');
-  assert.equal(result.capture.cwd, await fs.realpath(f.workspace));
+  // Windows may report an 8.3 path while the parent uses the long path.
+  assert.equal(await fs.realpath(result.capture.cwd), await fs.realpath(f.workspace));
   assert.equal(result.capture.token, fakeToken);
   assert.equal(result.capture.apiBaseURL, 'https://api.stg.thousandeyes.com');
   assert.ok(!result.capture.args.includes(fakeToken));
