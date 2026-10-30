@@ -44,7 +44,7 @@ const server = http.createServer(async (request, response) => {
       tests.set(testId, record);
       send(response, 201, {
         testId, type,
-        agents: body.agents.map(({ agentId }) => ({ agentId, agentType: 'cloud' })),
+        agents: body.agents.map(({ agentId }) => ({ agentId, agentType: 'cloud', agentName: `Creation agent ${agentId}` })),
         _links: { testResults: [{ href: `${baseURL}/v7/test-results/${testId}/${layer}` }] }
       });
     } catch {
@@ -60,7 +60,7 @@ const server = http.createServer(async (request, response) => {
       return;
     }
     const results = record.target.includes('incomplete.invalid') ? [] : record.agents.map(({ agentId }) => ({
-      agent: { agentId }, roundId: 1700000000,
+      agent: { agentId, ...(agentId === '6' ? { agentName: 'Result agent 6' } : {}) }, roundId: 1700000000,
       ...(record.type === 'http-server'
         ? { responseCode: record.target.includes('failure.invalid') ? 503 : 200, responseTime: 10, totalTime: 20 }
         : { direction: 'to-target', loss: 0, avgLatency: 5, jitter: 1 })

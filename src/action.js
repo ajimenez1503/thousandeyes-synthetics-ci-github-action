@@ -4,8 +4,9 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { installCLI } = require('./install');
 const { XMLValidator, XMLParser } = require('fast-xml-parser');
+const { writeSummary } = require('./summary');
 
-const DEFAULT_VERSION = '0.0.1-next';
+const DEFAULT_VERSION = '0.0.2-next';
 const DEFAULT_API = 'https://api.thousandeyes.com';
 
 class ActionError extends Error {}
@@ -90,22 +91,6 @@ async function validateJUnit(filename) {
   }
 }
 
-function escapeHTML(value) {
-  return String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
-}
-
-async function writeSummary(core, report, exitCode, counts) {
-  if (!process.env.GITHUB_STEP_SUMMARY) return;
-  const rows = report.tests.map(test => [escapeHTML(test.name), escapeHTML(test.type), escapeHTML(test.executionRule), escapeHTML(test.status)]);
-  await core.summary
-    .addHeading('ThousandEyes synthetic tests', 2)
-    .addRaw(`CLI exit code: ${exitCode}\n\n`)
-    .addRaw(`Run: <code>${report.runId}</code>\n\n`)
-    .addRaw(`Passed: ${counts.passed}; failed: ${counts.failed}; non-blocking failures: ${counts['non-blocking-failed']}; skipped: ${counts.skipped}; timed out: ${counts['timed-out']}; errors: ${counts.errors}.\n\n`)
-    .addTable([[{ data: 'Test', header: true }, { data: 'Type', header: true }, { data: 'Execution rule', header: true }, { data: 'Status', header: true }], ...rows])
-    .write();
-}
-
 async function run(core) {
   const token = core.getInput('api-token');
   if (token) core.setSecret(token);
@@ -145,7 +130,7 @@ async function run(core) {
     if (test.status === 'failed' && test.executionRule === 'non-blocking') counts['non-blocking-failed']++;
   }
   for (const [name, count] of Object.entries(counts)) core.setOutput(name, count);
-  await writeSummary(core, report, exitCode, counts);
+  await writeSummary(core, report, exitCode, counts, token);
   if (exitCode !== 0) {
     core.setFailed('ThousandEyes synthetic checks failed; inspect the JSON and JUnit reports.');
     process.exitCode = exitCode;

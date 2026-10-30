@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { test } = require('node:test');
+const { Parser, HtmlRenderer } = require('commonmark');
 
 const root = path.resolve(__dirname, '..');
 const entry = path.resolve(root, process.env.ACTION_ENTRY || 'src/index.js');
@@ -91,6 +92,22 @@ function assertNoRawChildLogs(result) {
   assert.ok(!result.visibleLog.includes('RAW_CHILD_STDERR'));
 }
 
+function summaryText(result) {
+  return result.summary.replace(/<[^>]*>/g, ' ');
+}
+
+function summaryLinks(result) {
+  return [...result.summary.matchAll(/\bhref=(["'])(.*?)\1/g)]
+    .map((match) => new URL(match[2].replaceAll('&amp;', '&')));
+}
+
+function agentCells(result) {
+  const tables = [...result.summary.matchAll(/<table\b[^>]*>[\s\S]*?<\/table>/g)]
+    .map(match => match[0]).filter(table => /<th\b[^>]*>Agent<\/th>/.test(table));
+  return tables.flatMap(table => [...table.matchAll(/<tr\b[^>]*>\s*<td\b[^>]*>([\s\S]*?)<\/td>/g)]
+    .map(match => match[1].replace(/<[^>]*>/g, ' ')));
+}
+
 test('entrypoint executes the CLI safely and exposes durable report paths and test counts', async (t) => {
   const f = await fixture(t);
   const result = await f.run({
@@ -157,6 +174,256 @@ test('report text cannot insert active HTML into the job summary', async (t) => 
   assert.equal(result.status, 0, result.visibleLog);
   assert.ok(!result.summary.includes('<script>'));
   assert.ok(!result.summary.includes('</script>'));
+  assertNoRawChildLogs(result);
+});
+
+test('summary includes run timing, test identities, agent measurements, and approved result links', async (t) => {
+  const f = await fixture(t);
+  const result = await f.run({ FIXTURE_CASE: 'details' });
+  assert.equal(result.status, 0, result.visibleLog);
+  const text = summaryText(result);
+  assert.match(text, /Agent measurements/);
+  assert.match(text, /Duration:\s*1(?:\.0+)?\s*s\b/);
+  assert.match(text, /Started:/);
+  assert.match(text, /Finished:/);
+  assert.ok(text.includes('2026-10-29T10:00:00'));
+  assert.ok(text.includes('2026-10-29T10:00:01'));
+  assert.match(text, /Target:\s*https:\/\/demo\.example\.com\/health/);
+  assert.match(text, /Target:\s*demo\.example\.com:443/);
+  const cells = agentCells(result);
+  assert.ok(cells.some(cell => /London Cloud/.test(cell) && /\b6\b/.test(cell)), 'agent cell includes its name and numeric ID');
+  assert.ok(result.summary.includes('Frankfurt &amp; Cloud'), 'agent name is HTML escaped');
+  for (const value of ['1001', '1002', '1700000000']) assert.ok(text.includes(value));
+  assert.match(text, /HTTP status:\s*401\b/);
+  assert.match(text, /Response time:\s*156\s*ms\b/);
+  assert.match(text, /Total time:\s*160\s*ms\b/);
+  assert.match(text, /Response time:\s*0(?:\.0+)?\s*ms\b/);
+  assert.match(text, /Packet loss:\s*0(?:\.0+)?\s*%/);
+  assert.match(text, /Average RTT:\s*14\.07\s*ms\b/);
+  assert.match(text, /Jitter:\s*0\.1(?:0)?\s*ms\b/);
+  const links = summaryLinks(result);
+  assert.equal(links.length, 3);
+  assert.deepEqual(new Set(links.map((url) => url.hostname)), new Set([
+    'app.thousandeyes.com', 'app.thousandeyes.eu', 'app.thousandeyes.gov'
+  ]));
+  for (const url of links) {
+    assert.equal(url.protocol, 'https:');
+    assert.equal(url.pathname, '/view/tests');
+    assert.equal(url.hash, '');
+    for (const [key, value] of url.searchParams) {
+      assert.ok(['__a', 'testId', 'roundId', 'agentId'].includes(key));
+      assert.match(value, /^\d+$/);
+    }
+  }
+  assert.ok(!result.summary.includes('drop-query'));
+  assert.ok(!result.summary.includes('drop-fragment'));
+  assert.equal(result.outputs.passed, '2', 'summary details must not change test counts');
+  assertNoRawChildLogs(result);
+});
+
+test('legacy v1 reports explicitly mark absent target and agent names while retaining numeric IDs', async (t) => {
+  const f = await fixture(t);
+  const result = await f.run();
+  assert.equal(result.status, 0, result.visibleLog);
+  assert.equal(result.outputs.passed, '2');
+  assert.match(summaryText(result), /Target:\s*Not reported/);
+  const cells = agentCells(result);
+  assert.equal(cells.length, 2);
+  assert.ok(cells.every(cell => /Not reported/.test(cell) && /\b6\b/.test(cell)));
+  assertNoRawChildLogs(result);
+});
+
+test('multiple agents count once per blocking or non-blocking suite test', async (t) => {
+  const f = await fixture(t);
+  const result = await f.run({ FIXTURE_CASE: 'multi-agent', FIXTURE_EXIT_CODE: '7' });
+  assert.equal(result.status, 7, result.visibleLog);
+  assert.equal(result.outputs.passed, '1');
+  assert.equal(result.outputs.failed, '2');
+  assert.equal(result.outputs['non-blocking-failed'], '1');
+  assert.equal(result.outputs['exit-code'], '7');
+  assertNoRawChildLogs(result);
+});
+
+test('multiple non-blocking failed agents preserve the successful CLI exit', async (t) => {
+  const f = await fixture(t);
+  const result = await f.run({ FIXTURE_CASE: 'multi-agent-non-blocking' });
+  assert.equal(result.status, 0, result.visibleLog);
+  assert.equal(result.outputs.passed, '1');
+  assert.equal(result.outputs.failed, '1');
+  assert.equal(result.outputs['non-blocking-failed'], '1');
+  assert.equal(result.outputs['exit-code'], '0');
+  assertNoRawChildLogs(result);
+});
+
+test('partial-agent timeout shows received measurements and missing-agent failure details', async (t) => {
+  const f = await fixture(t);
+  const result = await f.run({ FIXTURE_CASE: 'partial-agents', FIXTURE_EXIT_CODE: '1' });
+  assert.equal(result.status, 1, result.visibleLog);
+  assert.equal(result.outputs.passed, '0', 'a passed agent is not a passed suite test');
+  assert.equal(result.outputs['timed-out'], '1');
+  const text = summaryText(result);
+  assert.match(text, /execution deadline exceeded before all required measurements arrived/);
+  assert.match(text, /waiting for assigned agent measurements/);
+  assert.match(text, /Response time:\s*15\s*ms/);
+  assert.match(text, /Not reported/);
+  assertNoRawChildLogs(result);
+});
+
+test('new summary details escape HTML, redact the API token, and ignore unknown metrics or links', async (t) => {
+  const f = await fixture(t);
+  const result = await f.run({ FIXTURE_CASE: 'unsafe-details', FIXTURE_EXIT_CODE: '1' });
+  assert.equal(result.status, 1, result.visibleLog);
+  assert.ok(!/<(?:script|img)\b/i.test(result.summary));
+  assert.ok(result.summary.includes('&lt;script&gt;'));
+  assert.ok(!result.summary.includes(fakeToken), 'summary must not contain the literal token');
+  assert.ok(!result.summary.includes('DO_NOT_RENDER_UNKNOWN_METRIC'));
+  assert.ok(!result.summary.includes('external.invalid'));
+  assert.ok(!result.summary.includes('private-link-marker'));
+  assert.ok(result.summary.includes('&lt;em&gt;named-agent&lt;/em&gt;'), 'agent name is shown as escaped text');
+  assert.ok(!result.summary.includes('<em>named-agent</em>'));
+  assert.match(summaryText(result), /Target:\s*https:\/\/demo\.example\.com\/path/);
+  for (const value of ['target-user', 'target-password', 'target-query-secret', 'target-fragment-secret']) {
+    assert.ok(!result.summary.includes(value), `${value} is stripped from the target`);
+  }
+  assert.equal(summaryLinks(result).length, 0, 'target is plain text, never a clickable URL');
+  assert.match(summaryText(result), /HTTP status:\s*503\b/);
+  assertNoRawChildLogs(result);
+});
+
+test('unapproved or ambiguous result URLs are omitted without echoing their text', async (t) => {
+  const f = await fixture(t);
+  const result = await f.run({ FIXTURE_CASE: 'unsafe-links' });
+  assert.equal(result.status, 0, result.visibleLog);
+  assert.equal(summaryLinks(result).length, 0);
+  for (const value of ['http://', ':443/view', 'user:secret', 'evil.invalid', 'external.invalid', '%76iew', 'other/../view', 'javascript:', 'unsafe-link-marker']) {
+    assert.ok(!result.summary.includes(value), value);
+  }
+  assertNoRawChildLogs(result);
+});
+
+test('malformed optional detail fields remain harmless and never become invented measurements', async (t) => {
+  const f = await fixture(t);
+  const result = await f.run({ FIXTURE_CASE: 'malformed-details' });
+  assert.equal(result.status, 0, result.visibleLog);
+  assert.equal(result.outputs.passed, '3');
+  const text = summaryText(result);
+  for (const label of ['HTTP status', 'Response time', 'Total time', 'Average RTT', 'Jitter']) {
+    assert.match(text, new RegExp(`${label}:\\s*Not reported`), `${label} explicitly marks missing data`);
+  }
+  assert.match(text, /Packet loss:\s*0(?:\.0+)?\s*%/, 'reported zero remains visible beside missing network metrics');
+  assert.ok(!/HTTP status:\s*401\b/.test(text), 'string-valued status is not a numeric measurement');
+  assert.ok(!/Response time:\s*0(?:\.0+)?\s*ms\b/.test(text), 'missing time is not zero');
+  assert.ok(!/Total time:\s*0(?:\.0+)?\s*ms\b/.test(text), 'NaN time is not zero');
+  assert.ok(!result.summary.includes(fakeToken));
+  assert.ok(!result.summary.includes('[object Object]'));
+  assert.ok(!result.summary.includes('DO_NOT_RENDER_UNKNOWN_METRIC'));
+  assert.match(text, /Target:\s*Not reported/);
+  assert.ok(!result.summary.includes('DO_NOT_STRINGIFY_AGENT_NAME'));
+  assert.ok(!result.summary.includes('DO_NOT_STRINGIFY_TARGET'));
+  assert.ok(agentCells(result).some(cell => /Not reported/.test(cell) && /\b6\b/.test(cell)));
+  assertNoRawChildLogs(result);
+});
+
+test('large detailed summaries bound text, tests, per-test agents, and total agent rows', async (t) => {
+  const f = await fixture(t);
+  const result = await f.run({ FIXTURE_CASE: 'bounded-details' });
+  assert.equal(result.status, 0, result.visibleLog);
+  assert.equal(result.outputs.passed, '25', 'counts include all tests, regardless of displayed detail limits');
+  const text = summaryText(result);
+  assert.ok(Buffer.byteLength(result.summary, 'utf8') <= 512 * 1024);
+  assert.match(text, /Showing\s+20\s+of\s+25/i);
+  assert.ok(result.summary.includes('Agent-row-0-19'));
+  assert.ok(!result.summary.includes('Agent-row-0-20'), 'show at most 20 agents per test');
+  assert.ok(!result.summary.includes('Agent-row-5-0'), 'show at most 100 agent rows overall');
+  const displayedRows = result.summary.match(/Agent-row-\d+-\d+/g) || [];
+  assert.ok(displayedRows.length > 0 && displayedRows.length <= 100);
+  assert.ok(!result.summary.includes('_NAME_END'), 'long names are truncated');
+  assert.ok(!result.summary.includes('_MESSAGE_END'), 'long messages are truncated');
+  assert.ok(!result.summary.includes('_AGENT_NAME_END'), 'long agent names are truncated');
+  assert.ok(!result.summary.includes('_TARGET_END'), 'long targets are truncated or omitted');
+  assertNoRawChildLogs(result);
+});
+
+test('bounded details prioritize a late failed test and its late failed agent', async (t) => {
+  const f = await fixture(t);
+  const result = await f.run({ FIXTURE_CASE: 'failure-priority', FIXTURE_EXIT_CODE: '1' });
+  assert.equal(result.status, 1, result.visibleLog);
+  assert.equal(result.outputs.passed, '25');
+  assert.equal(result.outputs.failed, '1');
+  const headings = [...result.summary.matchAll(/<h3>(.*?)<\/h3>/g)].map(match => match[1]);
+  assert.equal(headings[0], 'late-blocking-problem', 'a failed test after 25 passes gets detailed first');
+  assert.ok(result.summary.includes('Critical-agent-measurement-failure'), 'a failed agent after 25 passes remains visible');
+  assertNoRawChildLogs(result);
+});
+
+test('global agent budget retains failure reasons across several failed tests before passing rows', async (t) => {
+  const f = await fixture(t);
+  const result = await f.run({ FIXTURE_CASE: 'global-failure-priority', FIXTURE_EXIT_CODE: '1' });
+  assert.equal(result.status, 1, result.visibleLog);
+  assert.equal(result.outputs.failed, '6');
+  assert.equal(result.outputs.passed, '0');
+  assert.equal(result.outputs['exit-code'], '1');
+  for (let index = 0; index < 6; index++) {
+    assert.ok(result.summary.includes(`Global-failure-${index}`), `failure reason for test ${index} remains visible`);
+  }
+  assert.ok(agentCells(result).length <= 100, 'the global row cap still applies');
+  const tables = [...result.summary.matchAll(/<table\b[^>]*>[\s\S]*?<\/table>/g)]
+    .map(match => match[0]).filter(table => /<th\b[^>]*>Agent<\/th>/.test(table));
+  assert.equal(tables.length, 6, 'all six failed tests receive agent detail tables');
+  for (const table of tables) {
+    assert.ok((table.match(/<tr>\s*<td>/g) || []).length <= 20, 'the per-test row cap still applies');
+  }
+  assertNoRawChildLogs(result);
+});
+
+test('problem-agent overflow preserves the global cap and complete test counts', async (t) => {
+  const f = await fixture(t);
+  const result = await f.run({ FIXTURE_CASE: 'global-failure-overflow', FIXTURE_EXIT_CODE: '1' });
+  assert.equal(result.status, 1, result.visibleLog);
+  assert.equal(result.outputs.failed, '6');
+  assert.equal(agentCells(result).length, 100, 'at most 100 of 120 failed agents are rendered');
+  assert.match(summaryText(result), /Showing\s+\d+\s+of\s+20\s+agents/);
+  assert.match(summaryText(result), /limited to\s+100\s+agent rows overall/);
+  assertNoRawChildLogs(result);
+});
+
+test('multiline details render as text without Markdown links, images, or reconstructed tokens', async (t) => {
+  const f = await fixture(t);
+  const result = await f.run({ FIXTURE_CASE: 'markdown-details', FIXTURE_EXIT_CODE: '1' });
+  assert.equal(result.status, 1, result.visibleLog);
+  const rendered = new HtmlRenderer().render(new Parser().parse(result.summary));
+  const links = summaryLinks({ summary: rendered });
+  assert.equal(links.length, 1, 'only the approved ThousandEyes result link becomes active');
+  assert.equal(links[0].hostname, 'app.thousandeyes.com');
+  assert.ok(!/<img\b/i.test(rendered), 'Markdown image syntax must not create an active image');
+  assert.ok(rendered.includes('Unexpected link'), 'the untrusted message remains visible as text');
+  for (const text of [result.summary, rendered]) {
+    assert.ok(!text.includes(fakeToken), 'normalizing controls must not reconstruct the token');
+    assert.ok(!text.includes('\x00'), 'control characters are removed before rendering');
+    assert.ok(text.includes('Agent [REDACTED]'), 'the normalized agent name is redacted');
+  }
+  assert.equal(result.outputs.failed, '1');
+  assertNoRawChildLogs(result);
+});
+
+test('small positive measurements retain their magnitude instead of rounding to zero', async (t) => {
+  const f = await fixture(t);
+  const result = await f.run({ FIXTURE_CASE: 'tiny-measurements' });
+  assert.equal(result.status, 0, result.visibleLog);
+  const text = summaryText(result);
+  for (const [label, expected, unit] of [
+    ['Response time', 0.0001234, 'ms'],
+    ['Total time', 0.0045, 'ms'],
+    ['Packet loss', 0.0001234, '%'],
+    ['Average RTT', 0.0000001234, 'ms'],
+    ['Jitter', 0.0000000001234, 'ms']
+  ]) {
+    const match = text.match(new RegExp(`${label}:\\s*([0-9.eE+-]+)\\s*${unit}`));
+    assert.ok(match, `${label} includes its numeric measurement and unit`);
+    const displayed = Number(match[1]);
+    assert.ok(displayed > 0, `${label} must not become zero`);
+    assert.ok(Math.abs(displayed - expected) / expected < 0.01, `${label} retains the measured magnitude`);
+  }
   assertNoRawChildLogs(result);
 });
 

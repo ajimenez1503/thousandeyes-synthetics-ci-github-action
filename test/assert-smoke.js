@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { XMLParser } = require('fast-xml-parser');
 
 async function main() {
   const cases = [
@@ -22,6 +23,18 @@ async function main() {
     assert.match(report.runId, /^[a-f0-9]{24}$/);
     assert.deepEqual(report.tests.map((test) => test.status), statuses, `${name} test statuses`);
     assert.ok(report.tests.every((test) => test.agents.length === 2), `${name} covers both assigned agents`);
+    const expectedCases = new Map();
+    for (const test of report.tests) {
+      const target = test.type === 'agent-to-server' ? 'healthy.invalid:443' :
+        `https://${name === 'INCOMPLETE' ? 'incomplete' : name === 'HEALTHY' ? 'healthy' : 'failure'}.invalid/health`;
+      assert.equal(test.target, target, `${name} ${test.name} target`);
+      assert.deepEqual(test.agents.map((agent) => agent.agentId), ['6', '7'], `${name} retains assigned agent IDs`);
+      for (const agent of test.agents) {
+        const agentName = name !== 'INCOMPLETE' && agent.agentId === '6' ? 'Result agent 6' : `Creation agent ${agent.agentId}`;
+        assert.equal(agent.agentName, agentName, `${name} ${test.name} agent ${agent.agentId} name`);
+        expectedCases.set(`${test.testId}/${agent.agentId}`, { test, agent });
+      }
+    }
     if (name === 'NON_BLOCKING') assert.equal(report.tests[0].executionRule, 'non-blocking');
     const junitPath = process.env[`${name}_JUNIT`] || path.join(path.dirname(reportPath), 'results.xml');
     const xml = await fs.readFile(junitPath, 'utf8');
@@ -29,11 +42,24 @@ async function main() {
     if (name === 'HEALTHY') assert.ok(!/<(?:failure|error)\b/.test(xml));
     if (name === 'BLOCKING' || name === 'NON_BLOCKING') assert.ok(xml.includes('<failure'), `${name} assertion appears in JUnit`);
     if (name === 'INCOMPLETE') assert.ok(xml.includes('<error'), 'timeout appears as JUnit error');
+    const document = new XMLParser({
+      ignoreAttributes: false, attributeNamePrefix: '',
+      isArray: (tag) => tag === 'testcase' || tag === 'property'
+    }).parse(xml);
+    assert.equal(document.testsuite.testcase.length, expectedCases.size, `${name} JUnit agent cases`);
+    for (const testCase of document.testsuite.testcase) {
+      const properties = new Map(testCase.properties.property.map((property) => [property.name, property.value]));
+      const expected = expectedCases.get(`${properties.get('testId')}/${properties.get('agentId')}`);
+      assert.ok(expected, `${name} JUnit case retains test and agent identities`);
+      assert.equal(properties.get('target'), expected.test.target, `${name} JUnit target`);
+      assert.equal(properties.get('agentName'), expected.agent.agentName, `${name} JUnit agent name`);
+      assert.equal(properties.get('executionRule'), expected.test.executionRule, `${name} JUnit execution rule`);
+    }
     paths.push(reportPath);
     runs.push(report.runId);
   }
   assert.equal(new Set(paths).size, cases.length, 'Each invocation uses a distinct report path');
   assert.equal(new Set(runs).size, cases.length, 'Each invocation creates a distinct CLI run');
-  console.log('Real CLI mock smoke passed: healthy, blocking failure, non-blocking failure, and incomplete measurements.');
+  console.log('Real CLI mock smoke passed: outcomes, targets, agent names, and JUnit metadata across healthy, blocking, non-blocking, and incomplete measurements.');
 }
 main().catch((error) => { console.error(error.message); process.exitCode = 1; });

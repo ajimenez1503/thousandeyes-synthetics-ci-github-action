@@ -147,14 +147,16 @@ test('does not change PATH while installing', async (t) => {
 });
 
 
-test('rejects a changed default release manifest before downloading the archive', async (t) => {
-  const h = await harness(t, { version: '0.0.1-next' });
-  await assert.rejects(installCLI(h.options), /pinned.*manifest.*checksum/i);
-  assert.equal(h.calls.download.length, 1);
-  assert.equal(h.calls.extract.length, 0);
-});
+for (const version of ['0.0.1-next', '0.0.2-next']) {
+  test(`rejects a changed pinned ${version} manifest before downloading the archive`, async (t) => {
+    const h = await harness(t, { version });
+    await assert.rejects(installCLI(h.options), /pinned.*manifest.*checksum/i);
+    assert.equal(h.calls.download.length, 1);
+    assert.equal(h.calls.extract.length, 0);
+  });
+}
 
-test('accepts the reviewed default manifest before checking the selected archive bytes', async (t) => {
+test('accepts a reviewed pinned manifest before checking the selected archive bytes', async (t) => {
   const manifest = [
     '32d0de8c604c23507c63a1cec30289025073a556d2660c81bbbaa22dc68c8f20  thousandeyes_0.0.1-next_Darwin_arm64.tar.gz',
     '549bb9e19795927e9c76baf8624de94190235f57de015326777e74cbad5b795c  thousandeyes_0.0.1-next_Darwin_x86_64.tar.gz',
