@@ -1,0 +1,51 @@
+name: ThousandEyes Synthetic CI
+author: ajimenez1503
+description: Run ThousandEyes instant synthetic tests with the shared CLI and preserve its CI outcome.
+inputs:
+  api-token:
+    description: ThousandEyes API bearer token. Supply this from a GitHub secret.
+    required: true
+  config-path:
+    description: Repository suite JSON file, relative to the workspace or absolute.
+    default: thousandeyes-ci.json
+  cli-version:
+    description: Exact CLI release version to download. Floating latest is not supported.
+    default: 0.0.1-next
+  cli-path:
+    description: Optional absolute path to a preinstalled CLI executable instead of downloading it.
+  account-group-id:
+    description: Optional account group override; otherwise use the suite value.
+  timeout:
+    description: Optional CLI suite timeout override, such as 5m.
+  poll-interval:
+    description: Optional result polling interval override, such as 5s.
+  api-base-url:
+    description: ThousandEyes API base URL. HTTP is allowed only for a local test server.
+    default: https://api.thousandeyes.com
+outputs:
+  run-id:
+    description: CLI run identity, when a report was produced.
+  exit-code:
+    description: CLI process exit code. Wrapper errors also fail the step.
+  json-report:
+    description: Absolute path reserved for the JSON report, available if the CLI produced it.
+  junit-report:
+    description: Absolute path reserved for the JUnit report, available if the CLI produced it.
+  passed:
+    description: Number of passed suite tests, not individual agents.
+  failed:
+    description: Number of failed suite tests, including non-blocking failures.
+  non-blocking-failed:
+    description: Number of failed tests with the non-blocking execution rule.
+  skipped:
+    description: Number of skipped suite tests.
+  timed-out:
+    description: Number of timed-out suite tests.
+  errors:
+    description: Number of suite tests with an execution error.
+runs:
+  using: node24
+  main: dist/index.js
+branding:
+  icon: activity
+  color: orange
