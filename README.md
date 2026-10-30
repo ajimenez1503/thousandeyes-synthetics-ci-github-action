@@ -47,7 +47,7 @@ Copy [`examples/thousandeyes-ci.json`](examples/thousandeyes-ci.json), then repl
 | --- | --- | --- |
 | `api-token` | Required | ThousandEyes API bearer token, supplied from a secret. |
 | `config-path` | `thousandeyes-ci.json` | Suite JSON file, relative to the checked-out workspace or absolute. |
-| `cli-version` | `0.0.1-next` | Exact release from `ajimenez1503/thousandeyes-cli`. Floating `latest` is rejected. |
+| `cli-version` | `0.0.2-next` | Exact release from `ajimenez1503/thousandeyes-cli`. Floating `latest` is rejected. |
 | `cli-path` | Empty | Absolute path to an explicitly managed CLI executable; bypasses downloading. |
 | `account-group-id` | Suite value | Override the suite account group. |
 | `timeout` | Suite value | Override the suite deadline, for example `5m`. |
@@ -70,9 +70,9 @@ Downloaded archives are checked against the release SHA-256 manifest before extr
 
 The job summary includes run timestamps and duration, the test overview, each test's sanitized target, and per-test agent tables with names and test/agent/round IDs, HTTP status and timings, network loss/RTT/jitter, failure messages, and approved ThousandEyes result links when the report provides them. Missing metadata and measurements are shown as `Not reported`. The summary uses the CLI report and does not read target credentials or native request payloads from the suite. Targets are displayed as text; HTTP user information, query strings, and fragments are removed.
 
-Agent names and targets require a CLI build that emits the optional version 1 `agentName` and `target` report fields. The pinned `0.0.1-next` release predates these fields. Until a new CLI release is available, use `cli-path` with a build containing the report changes to include them.
+The pinned [`0.0.2-next` CLI release](https://github.com/ajimenez1503/thousandeyes-cli/releases/tag/0.0.2-next) includes the optional version 1 `agentName` and `target` report fields. Older reports remain supported and show `Not reported` for unavailable metadata.
 
-Detailed tables prioritize failures and are bounded to 20 tests, 20 agents per test, and 100 agent rows overall. Long names/messages are truncated, text is escaped, and the supplied API token is redacted from summary fields. Omission notices point readers to the full JSON/JUnit artifacts. Completed run summaries do not change when the Action is updated; start a new run using the new Action commit to see the enhanced summary.
+Detailed tables reserve rows for failed, timed-out, and errored agents across selected tests before displaying passing agents. Details are bounded to 20 tests, 20 agents per test, and 100 agent rows overall. Control characters and line separators are removed before token redaction, truncation, and HTML escaping so report values remain text. Omission notices point readers to the full JSON/JUnit artifacts. Completed run summaries do not change when the Action is updated; start a new run using the new Action commit to see the enhanced summary.
 
 The Action preserves the CLI's exit decision. Blocking failures, timeouts, and execution errors fail the step. A non-blocking assertion failure stays visible in reports and counts while the CLI can still exit successfully. JUnit includes that failure, so an independent JUnit gate must account for the rule. Missing or unsupported JSON reports and missing, empty, or malformed JUnit reports fail the Action.
 
@@ -90,7 +90,7 @@ npm run build
 
 Commit `dist/` with source changes so consumers can run the Action directly. CI rebuilds it and checks for drift, then runs the bundled Action with the actual pinned CLI against a local mock API on Linux, macOS, and Windows. The mock uses fake tokens and does not create ThousandEyes tests or consume units.
 
-Local process tests cover failure propagation, non-blocking results, input safety, masking boundaries, report integrity, summary escaping, and unique report paths. Installer tests cover platform assets and checksum failures. This Action's GitHub CI does not validate a live ThousandEyes account; the earlier CLI STG pilot is separate evidence.
+Local process tests cover failure propagation, non-blocking results, input safety, masking boundaries, report integrity, global detail limits, rendered Markdown safety, and unique report paths. Installer tests cover platform assets and checksum failures. Native smoke tests also verify targets, agent names, and JUnit properties, including incomplete results. This Action's GitHub CI does not validate a live ThousandEyes account; the earlier CLI STG pilot is separate evidence.
 
 The wrapper separation follows the [Datadog synthetics Action](https://github.com/DataDog/synthetics-ci-github-action). No Datadog execution code is included.
 

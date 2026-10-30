@@ -144,6 +144,30 @@ if (process.env.FIXTURE_CASE === 'failure-priority') {
     }]
   });
 }
+if (['global-failure-priority', 'global-failure-overflow'].includes(process.env.FIXTURE_CASE)) {
+  const allFailed = process.env.FIXTURE_CASE === 'global-failure-overflow';
+  tests = Array.from({ length: 6 }, (_, index) => ({
+    ...check(`global-failed-check-${index}`, 'failed'),
+    agents: Array.from({ length: 20 }, (_, row) => ({
+      agentId: String(row + 1), status: row === 0 || allFailed ? 'failed' : 'passed',
+      message: row === 0 ? `Global-failure-${index}` : `Global-agent-${index}-${row}`,
+      metrics: { responseCode: row === 0 || allFailed ? 503 : 200 }
+    }))
+  }));
+}
+if (process.env.FIXTURE_CASE === 'markdown-details') {
+  const token = process.env.TE_TOKEN;
+  tests = [{
+    ...check('markdown-detail-check', 'failed'),
+    agents: [{
+      agentId: '6', status: 'failed',
+      agentName: 'Agent ' + token.slice(0, 17) + '\x00\n' + token.slice(17),
+      message: '\n\n[Unexpected link](https://external.invalid/path)\n\n![Remote image](https://external.invalid/image.png)\n\n',
+      metrics: { responseCode: 503 },
+      url: 'https://app.thousandeyes.com/view/tests?__a=123&testId=1005&agentId=6'
+    }]
+  }];
+}
 if (process.env.FIXTURE_CASE === 'tiny-measurements') {
   tests = [{
     ...check('tiny-http', 'passed'),

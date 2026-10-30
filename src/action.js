@@ -6,7 +6,7 @@ const { installCLI } = require('./install');
 const { XMLValidator, XMLParser } = require('fast-xml-parser');
 const { writeSummary } = require('./summary');
 
-const DEFAULT_VERSION = '0.0.1-next';
+const DEFAULT_VERSION = '0.0.2-next';
 const DEFAULT_API = 'https://api.thousandeyes.com';
 
 class ActionError extends Error {}

@@ -13,6 +13,9 @@ function record(value) {
 function textFormatter(token) {
   return (value, limit = 240, fallback = 'Not reported') => {
     let text = typeof value === 'string' && value ? value : fallback;
+    // Blank lines end raw HTML blocks and let Markdown become active. Normalize
+    // before redaction so removing controls cannot reconstruct the token.
+    text = text.replace(/[\p{Cc}\u2028\u2029]/gu, '');
     if (token) text = text.split(token).join('[REDACTED]');
     const characters = [];
     for (const character of text) {
@@ -103,6 +106,24 @@ function prioritized(items, limit) {
   return selected;
 }
 
+function agentDetails(tests) {
+  const details = tests.map(test => {
+    const agents = Array.isArray(test.agents) ? test.agents : [];
+    return { test, agents, candidates: prioritized(agents, MAX_AGENTS_PER_TEST), selected: [] };
+  });
+  let remainingRows = MAX_AGENT_ROWS;
+  // Reserve rows for problems across every selected test before showing passes.
+  for (const problem of [true, false]) {
+    for (const detail of details) {
+      const selected = detail.candidates.filter(agent => PROBLEM_STATUSES.has(agent?.status) === problem)
+        .slice(0, remainingRows);
+      detail.selected.push(...selected);
+      remainingRows -= selected.length;
+    }
+  }
+  return { details, remainingRows };
+}
+
 function measurements(type, agent, format) {
   const metrics = record(agent.metrics) ? agent.metrics : {};
   const fields = type === 'http-server'
@@ -137,19 +158,16 @@ function buildSummary(report, exitCode, counts, token) {
     ]));
 
   const tests = prioritized(report.tests, MAX_DETAIL_TESTS);
-  let remainingRows = MAX_AGENT_ROWS;
+  const { details: agentPlans, remainingRows } = agentDetails(tests);
   let details = '<h2>Agent measurements</h2>\n';
   if (tests.length < report.tests.length) {
     details += `<p>Showing ${tests.length} of ${report.tests.length} tests with agent details, prioritizing failures. See the full JSON/JUnit reports for all results.</p>\n`;
   }
-  for (const test of tests) {
+  for (const { test, agents, selected } of agentPlans) {
     details += `<h3>${format(test.name, 160)}</h3>\n` +
       `<p>Test ID: <code>${identifier(test.testId, format)}</code>; type: ${format(test.type, 40)}; rule: ${format(test.executionRule, 40)}.<br>` +
       `Target: <code>${format(targetText(test.target), 2048)}</code></p>\n`;
     if (typeof test.message === 'string' && test.message) details += `<p>${format(test.message)}</p>\n`;
-    const agents = Array.isArray(test.agents) ? test.agents : [];
-    const selected = prioritized(agents, Math.min(MAX_AGENTS_PER_TEST, remainingRows));
-    remainingRows -= selected.length;
     if (selected.length) {
       const rows = selected.map(value => {
         const agent = record(value) ? value : {};

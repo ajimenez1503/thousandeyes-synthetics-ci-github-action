@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { test } = require('node:test');
+const { Parser, HtmlRenderer } = require('commonmark');
 
 const root = path.resolve(__dirname, '..');
 const entry = path.resolve(root, process.env.ACTION_ENTRY || 'src/index.js');
@@ -352,6 +353,56 @@ test('bounded details prioritize a late failed test and its late failed agent', 
   const headings = [...result.summary.matchAll(/<h3>(.*?)<\/h3>/g)].map(match => match[1]);
   assert.equal(headings[0], 'late-blocking-problem', 'a failed test after 25 passes gets detailed first');
   assert.ok(result.summary.includes('Critical-agent-measurement-failure'), 'a failed agent after 25 passes remains visible');
+  assertNoRawChildLogs(result);
+});
+
+test('global agent budget retains failure reasons across several failed tests before passing rows', async (t) => {
+  const f = await fixture(t);
+  const result = await f.run({ FIXTURE_CASE: 'global-failure-priority', FIXTURE_EXIT_CODE: '1' });
+  assert.equal(result.status, 1, result.visibleLog);
+  assert.equal(result.outputs.failed, '6');
+  assert.equal(result.outputs.passed, '0');
+  assert.equal(result.outputs['exit-code'], '1');
+  for (let index = 0; index < 6; index++) {
+    assert.ok(result.summary.includes(`Global-failure-${index}`), `failure reason for test ${index} remains visible`);
+  }
+  assert.ok(agentCells(result).length <= 100, 'the global row cap still applies');
+  const tables = [...result.summary.matchAll(/<table\b[^>]*>[\s\S]*?<\/table>/g)]
+    .map(match => match[0]).filter(table => /<th\b[^>]*>Agent<\/th>/.test(table));
+  assert.equal(tables.length, 6, 'all six failed tests receive agent detail tables');
+  for (const table of tables) {
+    assert.ok((table.match(/<tr>\s*<td>/g) || []).length <= 20, 'the per-test row cap still applies');
+  }
+  assertNoRawChildLogs(result);
+});
+
+test('problem-agent overflow preserves the global cap and complete test counts', async (t) => {
+  const f = await fixture(t);
+  const result = await f.run({ FIXTURE_CASE: 'global-failure-overflow', FIXTURE_EXIT_CODE: '1' });
+  assert.equal(result.status, 1, result.visibleLog);
+  assert.equal(result.outputs.failed, '6');
+  assert.equal(agentCells(result).length, 100, 'at most 100 of 120 failed agents are rendered');
+  assert.match(summaryText(result), /Showing\s+\d+\s+of\s+20\s+agents/);
+  assert.match(summaryText(result), /limited to\s+100\s+agent rows overall/);
+  assertNoRawChildLogs(result);
+});
+
+test('multiline details render as text without Markdown links, images, or reconstructed tokens', async (t) => {
+  const f = await fixture(t);
+  const result = await f.run({ FIXTURE_CASE: 'markdown-details', FIXTURE_EXIT_CODE: '1' });
+  assert.equal(result.status, 1, result.visibleLog);
+  const rendered = new HtmlRenderer().render(new Parser().parse(result.summary));
+  const links = summaryLinks({ summary: rendered });
+  assert.equal(links.length, 1, 'only the approved ThousandEyes result link becomes active');
+  assert.equal(links[0].hostname, 'app.thousandeyes.com');
+  assert.ok(!/<img\b/i.test(rendered), 'Markdown image syntax must not create an active image');
+  assert.ok(rendered.includes('Unexpected link'), 'the untrusted message remains visible as text');
+  for (const text of [result.summary, rendered]) {
+    assert.ok(!text.includes(fakeToken), 'normalizing controls must not reconstruct the token');
+    assert.ok(!text.includes('\x00'), 'control characters are removed before rendering');
+    assert.ok(text.includes('Agent [REDACTED]'), 'the normalized agent name is redacted');
+  }
+  assert.equal(result.outputs.failed, '1');
   assertNoRawChildLogs(result);
 });
 

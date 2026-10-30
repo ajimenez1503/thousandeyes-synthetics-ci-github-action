@@ -10,7 +10,7 @@ inputs:
     default: thousandeyes-ci.json
   cli-version:
     description: Exact CLI release version to download. Floating latest is not supported.
-    default: 0.0.1-next
+    default: 0.0.2-next
   cli-path:
     description: Optional absolute path to a preinstalled CLI executable instead of downloading it.
   account-group-id:

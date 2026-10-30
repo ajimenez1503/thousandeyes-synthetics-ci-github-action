@@ -6,9 +6,10 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 
 const REPOSITORY = 'ajimenez1503/thousandeyes-cli';
-// Pin the reviewed default release bytes even if its GitHub assets change.
+// Pin reviewed release bytes even if their GitHub assets change.
 const PINNED_MANIFEST_DIGESTS = Object.freeze({
   '0.0.1-next': 'f1ab5e8c2625f5f71e3d8682562464c4a7637face0a87afeb6ad5f4c900c0c15',
+  '0.0.2-next': '10226378a82cf3f2febe26969cb751d67465e4fe3c79677cf4468f2f437d1d82',
 });
 const VERSION_PATTERN = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 const PLATFORMS = { linux: 'Linux', darwin: 'Darwin', win32: 'Windows' };
