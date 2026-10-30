@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Run synthetic checks
         id: synthetics
-        uses: ajimenez1503/thousandeyes-synthetics-ci-github-action@st/thin-synthetic-action
+        uses: ajimenez1503/thousandeyes-synthetics-ci-github-action@main
         with:
           api-token: ${{ secrets.TE_TOKEN }}
           config-path: thousandeyes-ci.json
@@ -37,7 +37,7 @@ jobs:
           if-no-files-found: warn
 ```
 
-The branch reference is for this initial preview. Pin the Action to a reviewed full commit SHA for a fixed implementation. A stable Action version tag and GitHub Marketplace listing are not published yet.
+The `main` reference is for this preview. Pin the Action to a reviewed full commit SHA for a fixed implementation. A stable Action version tag and GitHub Marketplace listing are not published yet.
 
 Copy [`examples/thousandeyes-ci.json`](examples/thousandeyes-ci.json), then replace the account group, agent IDs, target, and thresholds with your values. Each invocation creates new instant tests and consumes applicable ThousandEyes units. The Action does not modify scheduled tests.
 
@@ -67,6 +67,10 @@ Downloaded archives are checked against the release SHA-256 manifest before extr
 | `json-report`, `junit-report` | Unique absolute report paths under the runner's temporary directory. A path is reserved before execution; a file exists only if the CLI produced it. |
 | `passed`, `failed`, `skipped`, `timed-out`, `errors` | Counts of suite tests with each outcome, not agent counts. |
 | `non-blocking-failed` | Subset of `failed` with the non-blocking rule. |
+
+The job summary includes run timestamps and duration, the test overview, and per-test agent tables with test/agent/round IDs, HTTP status and timings, network loss/RTT/jitter, failure messages, and approved ThousandEyes result links when the report provides them. Missing measurements are shown as `Not reported`. The summary uses the CLI report and does not read target credentials or native request payloads from the suite.
+
+Detailed tables prioritize failures and are bounded to 20 tests, 20 agents per test, and 100 agent rows overall. Long names/messages are truncated, text is escaped, and the supplied API token is redacted from summary fields. Omission notices point readers to the full JSON/JUnit artifacts. Completed run summaries do not change when the Action is updated; start a new run using the new Action commit to see the enhanced summary.
 
 The Action preserves the CLI's exit decision. Blocking failures, timeouts, and execution errors fail the step. A non-blocking assertion failure stays visible in reports and counts while the CLI can still exit successfully. JUnit includes that failure, so an independent JUnit gate must account for the rule. Missing or unsupported JSON reports and missing, empty, or malformed JUnit reports fail the Action.
 
