@@ -689,6 +689,25 @@ function resultURL(value, token) {
   }
 }
 
+function targetText(value) {
+  if (typeof value !== 'string' || !value || /[\u0000-\u001f\u007f]/.test(value)) return '';
+  if (/^https?:\/\//i.test(value)) {
+    try {
+      const target = new URL(value);
+      if (!target.hostname) return '';
+      target.username = '';
+      target.password = '';
+      target.search = '';
+      target.hash = '';
+      return target.href;
+    } catch {
+      return '';
+    }
+  }
+  // Network targets are display text, never links. Reject URL/userinfo syntax.
+  return /^(?:[a-z\d](?:[a-z\d._-]*[a-z\d])?\.?|\[[a-f\d:.]+\]|[a-f\d:]+)(?::\d{1,5})?$/i.test(value) ? value : '';
+}
+
 function prioritized(items, limit) {
   const selected = [];
   if (limit === 0) return selected;
@@ -743,7 +762,8 @@ function buildSummary(report, exitCode, counts, token) {
   }
   for (const test of tests) {
     details += `<h3>${format(test.name, 160)}</h3>\n` +
-      `<p>Test ID: <code>${identifier(test.testId, format)}</code>; type: ${format(test.type, 40)}; rule: ${format(test.executionRule, 40)}.</p>\n`;
+      `<p>Test ID: <code>${identifier(test.testId, format)}</code>; type: ${format(test.type, 40)}; rule: ${format(test.executionRule, 40)}.<br>` +
+      `Target: <code>${format(targetText(test.target), 2048)}</code></p>\n`;
     if (typeof test.message === 'string' && test.message) details += `<p>${format(test.message)}</p>\n`;
     const agents = Array.isArray(test.agents) ? test.agents : [];
     const selected = prioritized(agents, Math.min(MAX_AGENTS_PER_TEST, remainingRows));
@@ -753,7 +773,7 @@ function buildSummary(report, exitCode, counts, token) {
         const agent = record(value) ? value : {};
         const href = resultURL(agent.url, token);
         return [
-          identifier(agent.agentId, format), identifier(agent.roundId, format),
+          `${format(agent.agentName, 160)}<br>ID: ${identifier(agent.agentId, format)}`, identifier(agent.roundId, format),
           format(AGENT_STATUSES.has(agent.status) ? agent.status : ''), measurements(test.type, agent, format),
           format(agent.message, 240, 'No additional details'),
           href ? `<a href="${format(href, 512)}">View in ThousandEyes</a>` : 'Not provided'

@@ -100,6 +100,13 @@ function summaryLinks(result) {
     .map((match) => new URL(match[2].replaceAll('&amp;', '&')));
 }
 
+function agentCells(result) {
+  const tables = [...result.summary.matchAll(/<table\b[^>]*>[\s\S]*?<\/table>/g)]
+    .map(match => match[0]).filter(table => /<th\b[^>]*>Agent<\/th>/.test(table));
+  return tables.flatMap(table => [...table.matchAll(/<tr\b[^>]*>\s*<td\b[^>]*>([\s\S]*?)<\/td>/g)]
+    .map(match => match[1].replace(/<[^>]*>/g, ' ')));
+}
+
 test('entrypoint executes the CLI safely and exposes durable report paths and test counts', async (t) => {
   const f = await fixture(t);
   const result = await f.run({
@@ -180,6 +187,11 @@ test('summary includes run timing, test identities, agent measurements, and appr
   assert.match(text, /Finished:/);
   assert.ok(text.includes('2026-10-29T10:00:00'));
   assert.ok(text.includes('2026-10-29T10:00:01'));
+  assert.match(text, /Target:\s*https:\/\/demo\.example\.com\/health/);
+  assert.match(text, /Target:\s*demo\.example\.com:443/);
+  const cells = agentCells(result);
+  assert.ok(cells.some(cell => /London Cloud/.test(cell) && /\b6\b/.test(cell)), 'agent cell includes its name and numeric ID');
+  assert.ok(result.summary.includes('Frankfurt &amp; Cloud'), 'agent name is HTML escaped');
   for (const value of ['1001', '1002', '1700000000']) assert.ok(text.includes(value));
   assert.match(text, /HTTP status:\s*401\b/);
   assert.match(text, /Response time:\s*156\s*ms\b/);
@@ -205,6 +217,18 @@ test('summary includes run timing, test identities, agent measurements, and appr
   assert.ok(!result.summary.includes('drop-query'));
   assert.ok(!result.summary.includes('drop-fragment'));
   assert.equal(result.outputs.passed, '2', 'summary details must not change test counts');
+  assertNoRawChildLogs(result);
+});
+
+test('legacy v1 reports explicitly mark absent target and agent names while retaining numeric IDs', async (t) => {
+  const f = await fixture(t);
+  const result = await f.run();
+  assert.equal(result.status, 0, result.visibleLog);
+  assert.equal(result.outputs.passed, '2');
+  assert.match(summaryText(result), /Target:\s*Not reported/);
+  const cells = agentCells(result);
+  assert.equal(cells.length, 2);
+  assert.ok(cells.every(cell => /Not reported/.test(cell) && /\b6\b/.test(cell)));
   assertNoRawChildLogs(result);
 });
 
@@ -254,6 +278,13 @@ test('new summary details escape HTML, redact the API token, and ignore unknown 
   assert.ok(!result.summary.includes('DO_NOT_RENDER_UNKNOWN_METRIC'));
   assert.ok(!result.summary.includes('external.invalid'));
   assert.ok(!result.summary.includes('private-link-marker'));
+  assert.ok(result.summary.includes('&lt;em&gt;named-agent&lt;/em&gt;'), 'agent name is shown as escaped text');
+  assert.ok(!result.summary.includes('<em>named-agent</em>'));
+  assert.match(summaryText(result), /Target:\s*https:\/\/demo\.example\.com\/path/);
+  for (const value of ['target-user', 'target-password', 'target-query-secret', 'target-fragment-secret']) {
+    assert.ok(!result.summary.includes(value), `${value} is stripped from the target`);
+  }
+  assert.equal(summaryLinks(result).length, 0, 'target is plain text, never a clickable URL');
   assert.match(summaryText(result), /HTTP status:\s*503\b/);
   assertNoRawChildLogs(result);
 });
@@ -285,6 +316,10 @@ test('malformed optional detail fields remain harmless and never become invented
   assert.ok(!result.summary.includes(fakeToken));
   assert.ok(!result.summary.includes('[object Object]'));
   assert.ok(!result.summary.includes('DO_NOT_RENDER_UNKNOWN_METRIC'));
+  assert.match(text, /Target:\s*Not reported/);
+  assert.ok(!result.summary.includes('DO_NOT_STRINGIFY_AGENT_NAME'));
+  assert.ok(!result.summary.includes('DO_NOT_STRINGIFY_TARGET'));
+  assert.ok(agentCells(result).some(cell => /Not reported/.test(cell) && /\b6\b/.test(cell)));
   assertNoRawChildLogs(result);
 });
 
@@ -303,6 +338,8 @@ test('large detailed summaries bound text, tests, per-test agents, and total age
   assert.ok(displayedRows.length > 0 && displayedRows.length <= 100);
   assert.ok(!result.summary.includes('_NAME_END'), 'long names are truncated');
   assert.ok(!result.summary.includes('_MESSAGE_END'), 'long messages are truncated');
+  assert.ok(!result.summary.includes('_AGENT_NAME_END'), 'long agent names are truncated');
+  assert.ok(!result.summary.includes('_TARGET_END'), 'long targets are truncated or omitted');
   assertNoRawChildLogs(result);
 });
 

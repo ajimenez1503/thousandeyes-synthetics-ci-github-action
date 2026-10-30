@@ -68,7 +68,9 @@ Downloaded archives are checked against the release SHA-256 manifest before extr
 | `passed`, `failed`, `skipped`, `timed-out`, `errors` | Counts of suite tests with each outcome, not agent counts. |
 | `non-blocking-failed` | Subset of `failed` with the non-blocking rule. |
 
-The job summary includes run timestamps and duration, the test overview, and per-test agent tables with test/agent/round IDs, HTTP status and timings, network loss/RTT/jitter, failure messages, and approved ThousandEyes result links when the report provides them. Missing measurements are shown as `Not reported`. The summary uses the CLI report and does not read target credentials or native request payloads from the suite.
+The job summary includes run timestamps and duration, the test overview, each test's sanitized target, and per-test agent tables with names and test/agent/round IDs, HTTP status and timings, network loss/RTT/jitter, failure messages, and approved ThousandEyes result links when the report provides them. Missing metadata and measurements are shown as `Not reported`. The summary uses the CLI report and does not read target credentials or native request payloads from the suite. Targets are displayed as text; HTTP user information, query strings, and fragments are removed.
+
+Agent names and targets require a CLI build that emits the optional version 1 `agentName` and `target` report fields. The pinned `0.0.1-next` release predates these fields. Until a new CLI release is available, use `cli-path` with a build containing the report changes to include them.
 
 Detailed tables prioritize failures and are bounded to 20 tests, 20 agents per test, and 100 agent rows overall. Long names/messages are truncated, text is escaped, and the supplied API token is redacted from summary fields. Omission notices point readers to the full JSON/JUnit artifacts. Completed run summaries do not change when the Action is updated; start a new run using the new Action commit to see the enhanced summary.
 

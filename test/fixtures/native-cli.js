@@ -33,20 +33,20 @@ if (process.env.FIXTURE_CASE === 'unsafe-name') {
 }
 if (process.env.FIXTURE_CASE === 'details') {
   tests = [{
-    ...check('detailed-http', 'passed'), testId: '1001',
+    ...check('detailed-http', 'passed'), testId: '1001', target: 'https://demo.example.com/health',
     agents: [{
-      agentId: '6', roundId: '1700000000', status: 'passed',
+      agentId: '6', agentName: 'London Cloud', roundId: '1700000000', status: 'passed',
       metrics: { responseCode: 401, responseTime: 156, totalTime: 160 },
       url: 'https://app.thousandeyes.com/view/tests?__a=123456&testId=1001&roundId=1700000000&agentId=6&token=drop-query#drop-fragment'
     }, {
-      agentId: '7', roundId: '1700000000', status: 'passed',
+      agentId: '7', agentName: 'Frankfurt & Cloud', roundId: '1700000000', status: 'passed',
       metrics: { responseCode: 401, responseTime: 0, totalTime: 0 },
       url: 'https://app.thousandeyes.eu/view/tests?testId=1001&agentId=7'
     }]
   }, {
-    ...check('detailed-network', 'passed'), type: 'agent-to-server', testId: '1002',
+    ...check('detailed-network', 'passed'), type: 'agent-to-server', testId: '1002', target: 'demo.example.com:443',
     agents: [{
-      agentId: '6', roundId: '1700000000', status: 'passed',
+      agentId: '6', agentName: 'London Cloud', roundId: '1700000000', status: 'passed',
       metrics: { loss: 0, avgLatency: 14.073301, jitter: 0.09514871 },
       url: 'https://app.thousandeyes.gov/view/tests?testId=1002&agentId=6'
     }]
@@ -78,9 +78,10 @@ if (process.env.FIXTURE_CASE === 'partial-agents') {
 if (process.env.FIXTURE_CASE === 'unsafe-details') {
   tests = [{
     ...check('<img src=x onerror="alert(1)"> ' + process.env.TE_TOKEN, 'failed'), testId: '1004',
+    target: 'https://target-user:target-password@demo.example.com/path/' + process.env.TE_TOKEN + '?api_key=target-query-secret#target-fragment-secret',
     message: '<script>test-message</script> ' + process.env.TE_TOKEN,
     agents: [{
-      agentId: '6', roundId: '1700000000', status: 'failed',
+      agentId: '6', agentName: '<em>named-agent</em> ' + process.env.TE_TOKEN, roundId: '1700000000', status: 'failed',
       message: '<script>agent-message</script> ' + process.env.TE_TOKEN,
       metrics: { responseCode: 503, responseTime: 20, unknown: 'DO_NOT_RENDER_UNKNOWN_METRIC' },
       url: 'https://external.invalid/private-link-marker?token=' + process.env.TE_TOKEN
@@ -106,15 +107,15 @@ if (process.env.FIXTURE_CASE === 'unsafe-links') {
 }
 if (process.env.FIXTURE_CASE === 'malformed-details') {
   tests = [{
-    ...check('malformed-agent-details', 'passed'), message: { hidden: process.env.TE_TOKEN },
+    ...check('malformed-agent-details', 'passed'), target: { hidden: process.env.TE_TOKEN }, message: { hidden: process.env.TE_TOKEN },
     agents: [{
-      agentId: '6', status: 'passed',
+      agentId: '6', agentName: { hidden: process.env.TE_TOKEN }, status: 'passed',
       metrics: { responseCode: '401', responseTime: null, totalTime: 'NaN', unknown: 'DO_NOT_RENDER_UNKNOWN_METRIC' },
       message: { hidden: process.env.TE_TOKEN }, url: { hidden: process.env.TE_TOKEN }
     }, null, {
-      agentId: { hidden: process.env.TE_TOKEN }, roundId: [], status: {}, metrics: 'not-a-metric-map'
+      agentId: { hidden: process.env.TE_TOKEN }, agentName: ['DO_NOT_STRINGIFY_AGENT_NAME'], roundId: [], status: {}, metrics: 'not-a-metric-map'
     }]
-  }, { ...check('malformed-agent-list', 'passed'), agents: { hidden: process.env.TE_TOKEN } }, {
+  }, { ...check('malformed-agent-list', 'passed'), target: ['DO_NOT_STRINGIFY_TARGET'], agents: { hidden: process.env.TE_TOKEN } }, {
     ...check('partial-network-metrics', 'passed'), type: 'agent-to-server',
     agents: [{ agentId: '6', status: 'passed', metrics: { loss: 0, avgLatency: 'NaN' } }]
   }];
@@ -122,9 +123,9 @@ if (process.env.FIXTURE_CASE === 'malformed-details') {
 if (process.env.FIXTURE_CASE === 'bounded-details') {
   tests = Array.from({ length: 25 }, (_, index) => ({
     ...check(`bounded-check-${index} ` + 'n'.repeat(1000) + '_NAME_END', 'passed'),
-    testId: String(2000 + index),
+    testId: String(2000 + index), target: 'https://demo.example.com/' + 't'.repeat(3000) + '_TARGET_END',
     agents: Array.from({ length: 25 }, (_, agentIndex) => ({
-      agentId: String(agentIndex + 1), roundId: '1700000000', status: 'passed',
+      agentId: String(agentIndex + 1), agentName: 'Bounded agent ' + 'a'.repeat(500) + '_AGENT_NAME_END', roundId: '1700000000', status: 'passed',
       message: `Agent-row-${index}-${agentIndex} ` + '<&'.repeat(500) + '_MESSAGE_END',
       metrics: { responseCode: 200, responseTime: 10, totalTime: 20 }
     }))
