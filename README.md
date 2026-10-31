@@ -74,6 +74,8 @@ Both tables show status text with a colored symbol: 🟢 passed, 🔴 failed/err
 
 The pinned [`0.0.2-next` CLI release](https://github.com/ajimenez1503/thousandeyes-cli/releases/tag/0.0.2-next) includes the optional version 1 `agentName` and `target` report fields. Older reports remain supported and show `Not reported` for unavailable metadata.
 
+When agent details exceed the summary size limit, the Action retains test context and prioritizes failure rows across tests before passing rows. Omission notices show how many agents are displayed; the JSON and JUnit reports retain all results.
+
 Detailed tables reserve rows for failed, timed-out, and errored agents across selected tests before displaying passing agents. Details are bounded to 20 tests, 20 agents per test, and 100 agent rows overall. Control characters and line separators are removed before token redaction, truncation, and HTML escaping so report values remain text. Omission notices point readers to the full JSON/JUnit artifacts. Completed run summaries do not change when the Action is updated; start a new run using the new Action commit to see the enhanced summary.
 
 The Action preserves the CLI's exit decision. Blocking failures, timeouts, and execution errors fail the step. A non-blocking assertion failure stays visible in reports and counts while the CLI can still exit successfully. JUnit includes that failure, so an independent JUnit gate must account for the rule. Missing or unsupported JSON reports and missing, empty, or malformed JUnit reports fail the Action.

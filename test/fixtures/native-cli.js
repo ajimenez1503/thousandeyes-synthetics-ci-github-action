@@ -152,6 +152,22 @@ if (process.env.FIXTURE_CASE === 'failure-priority') {
     }]
   });
 }
+if (['byte-budget-details', 'byte-budget-global-failures'].includes(process.env.FIXTURE_CASE)) {
+  const eachFailed = process.env.FIXTURE_CASE === 'byte-budget-global-failures';
+  tests = Array.from({ length: 5 }, (_, index) => ({
+    ...check(`byte-budget-check-${index}`, eachFailed || index === 4 ? 'failed' : 'passed'),
+    testId: String(5001 + index), target: 'https://demo.example.com/' + '&'.repeat(1900) + `/test-${index}`,
+    agents: Array.from({ length: 20 }, (_, row) => {
+      const failed = (eachFailed || index === 4) && row === 19;
+      return {
+        agentId: String(row + 1), agentName: `Byte-agent-${index}-${row}`, roundId: '1700000000',
+        status: failed ? 'failed' : 'passed',
+        message: failed ? `Byte-budget-failure${eachFailed ? `-${index}` : ''}: HTTP 503; expected 200` : `Budget-pass-${index}-${row}`,
+        metrics: { responseCode: failed ? 503 : 200, responseTime: 10, totalTime: 20 }
+      };
+    })
+  }));
+}
 if (['global-failure-priority', 'global-failure-overflow'].includes(process.env.FIXTURE_CASE)) {
   const allFailed = process.env.FIXTURE_CASE === 'global-failure-overflow';
   tests = Array.from({ length: 6 }, (_, index) => ({

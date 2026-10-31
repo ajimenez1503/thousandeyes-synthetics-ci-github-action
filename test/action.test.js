@@ -406,6 +406,66 @@ test('bounded details prioritize a late failed test and its late failed agent', 
   assertNoRawChildLogs(result);
 });
 
+test('escaped repeated targets keep failure details and accurate omissions within the byte budget', async (t) => {
+  const f = await fixture(t);
+  const result = await f.run({ FIXTURE_CASE: 'byte-budget-details', FIXTURE_EXIT_CODE: '1' });
+  assert.equal(result.status, 1, result.visibleLog);
+  assert.equal(result.outputs.passed, '4');
+  assert.equal(result.outputs.failed, '1');
+  assert.equal(result.outputs['exit-code'], '1');
+  assert.ok(Buffer.byteLength(result.summary, 'utf8') <= 512 * 1024);
+  assert.ok(result.summary.includes('Byte-budget-failure: HTTP 503; expected 200'), 'a late failed agent keeps its diagnostic');
+  const [overview, ...agentTables] = summaryTables(result);
+  assert.equal(overview.rows.length, 5, 'overview counts and identities remain complete');
+  const rows = agentTables.flatMap(table => table.rows);
+  assert.ok(rows.length > 1 && rows.length < 100, 'some passing rows fit while excess rows are omitted');
+  assert.ok(rows.some(row => row[5] === '🟢 passed'));
+  assert.ok(rows.some(row => row[5] === '🔴 failed' && /HTTP status: 503/.test(row[6])));
+  for (const table of agentTables) {
+    assert.deepEqual(table.headers.slice(0, 3), ['Test ID', 'Test', 'Target']);
+    for (const row of table.rows) {
+      const index = Number(row[0]) - 5001;
+      assert.equal(row[1], `byte-budget-check-${index}`);
+      assert.equal(row[2], 'https://demo.example.com/' + '&amp;'.repeat(1900) + `/test-${index}`);
+    }
+  }
+  let notices = 0;
+  const sections = result.summary.split('<h3>').slice(1);
+  assert.equal(sections.length, 5, 'all selected test contexts remain available');
+  for (const section of sections) {
+    const displayed = summaryTables({ summary: section }).reduce((total, table) => total + table.rows.length, 0);
+    if (displayed < 20) {
+      assert.match(summaryText({ summary: section }), new RegExp(`Showing\\s+${displayed}\\s+of\\s+20\\s+agents`));
+      notices++;
+    }
+  }
+  assert.ok(notices > 0, 'every shortened table reports its actual displayed count');
+  assertNoRawChildLogs(result);
+});
+
+test('summary byte budget retains failures across tests before passing rows', async (t) => {
+  const f = await fixture(t);
+  const result = await f.run({ FIXTURE_CASE: 'byte-budget-global-failures', FIXTURE_EXIT_CODE: '1' });
+  assert.equal(result.status, 1, result.visibleLog);
+  assert.equal(result.outputs.failed, '5');
+  assert.equal(result.outputs.passed, '0');
+  assert.equal(result.outputs['exit-code'], '1');
+  assert.ok(Buffer.byteLength(result.summary, 'utf8') <= 512 * 1024);
+  const [overview, ...agentTables] = summaryTables(result);
+  assert.equal(overview.rows.length, 5);
+  assert.equal(agentTables.length, 5, 'all five failed tests retain an agent table');
+  for (let index = 0; index < 5; index++) {
+    const failure = agentTables[index].rows.find(row => row[5] === '🔴 failed');
+    assert.ok(failure, `later failed test ${index} receives bytes before earlier passing agents`);
+    assert.equal(failure[0], String(5001 + index));
+    assert.ok(failure[7].includes(`Byte-budget-failure-${index}: HTTP 503; expected 200`));
+  }
+  const rows = agentTables.flatMap(table => table.rows);
+  assert.ok(rows.length > 5 && rows.length < 100, 'passing rows fill the remaining space within the cap');
+  assert.match(summaryText(result), /Some agent rows were omitted.*prioritizing failures/);
+  assertNoRawChildLogs(result);
+});
+
 test('global agent budget retains failure reasons across several failed tests before passing rows', async (t) => {
   const f = await fixture(t);
   const result = await f.run({ FIXTURE_CASE: 'global-failure-priority', FIXTURE_EXIT_CODE: '1' });

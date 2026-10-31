@@ -6,6 +6,7 @@ const RESULT_HOSTS = new Set(['app.thousandeyes.com', 'app.thousandeyes.eu', 'ap
 const PROBLEM_STATUSES = new Set(['failed', 'timed-out', 'error']);
 const AGENT_STATUSES = new Set(['passed', 'failed', 'skipped', 'timed-out', 'error', 'pending']);
 const STATUS_SYMBOLS = { passed: '🟢', failed: '🔴', skipped: '⚪', 'timed-out': '🟠', error: '🔴', pending: '🟡' };
+const AGENT_HEADERS = ['Test ID', 'Test', 'Target', 'Agent', 'Round', 'Status', 'Measurements', 'Details', 'Results'];
 
 function record(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -146,6 +147,48 @@ function measurements(type, agent, format) {
   return lines.join('<br>');
 }
 
+function agentSection({ context, agents, rows }) {
+  let section = context;
+  if (rows.length) section += table(AGENT_HEADERS, rows.map(row => row.cells));
+  else if (agents.length === 0) section += '<p>Agent results: Not reported.</p>\n';
+  if (rows.length < agents.length) {
+    section += `<p>Showing ${rows.length} of ${agents.length} agents. See the full JSON/JUnit reports for all results.</p>\n`;
+  }
+  return section;
+}
+
+function boundedSummary(overview, prefix, plans, suffix) {
+  const summary = overview + prefix + plans.map(agentSection).join('') + suffix;
+  if (Buffer.byteLength(summary, 'utf8') <= MAX_SUMMARY_BYTES) return summary;
+
+  const notice = '<p>Some agent rows were omitted to stay within the summary size limit, prioritizing failures. See the full JSON/JUnit reports for all results.</p>\n';
+  const admitted = plans.map(plan => ({ ...plan, rows: [] }));
+  const sections = admitted.map(agentSection);
+  let bytes = Buffer.byteLength(overview + prefix + sections.join('') + suffix + notice, 'utf8');
+  if (bytes > MAX_SUMMARY_BYTES) {
+    return overview + '<p>Agent details were omitted to stay within the summary size limit. See the full JSON/JUnit reports.</p>\n';
+  }
+  // Reserve every test's context and omission notices, then spend the remaining
+  // UTF-8 bytes on problems across all tests before admitting passing rows.
+  for (const problem of [true, false]) {
+    for (let index = 0; index < plans.length; index++) {
+      for (const row of plans[index].rows) {
+        if (PROBLEM_STATUSES.has(row.status) !== problem) continue;
+        admitted[index].rows.push(row);
+        const section = agentSection(admitted[index]);
+        const delta = Buffer.byteLength(section, 'utf8') - Buffer.byteLength(sections[index], 'utf8');
+        if (bytes + delta <= MAX_SUMMARY_BYTES) {
+          sections[index] = section;
+          bytes += delta;
+        } else {
+          admitted[index].rows.pop();
+        }
+      }
+    }
+  }
+  return overview + prefix + sections.join('') + suffix + notice;
+}
+
 function buildSummary(report, exitCode, counts, token) {
   const format = textFormatter(token);
   const started = timestamp(report.startedAt);
@@ -166,40 +209,34 @@ function buildSummary(report, exitCode, counts, token) {
 
   const tests = prioritized(report.tests, MAX_DETAIL_TESTS);
   const { details: agentPlans, remainingRows } = agentDetails(tests);
-  let details = '<h2>Agent measurements</h2>\n';
+  let prefix = '<h2>Agent measurements</h2>\n';
   if (tests.length < report.tests.length) {
-    details += `<p>Showing ${tests.length} of ${report.tests.length} tests with agent details, prioritizing failures. See the full JSON/JUnit reports for all results.</p>\n`;
+    prefix += `<p>Showing ${tests.length} of ${report.tests.length} tests with agent details, prioritizing failures. See the full JSON/JUnit reports for all results.</p>\n`;
   }
-  for (const { test, agents, selected } of agentPlans) {
-    details += `<h3>${format(test.name, 160)}</h3>\n` +
+  const plans = agentPlans.map(({ test, agents, selected }) => {
+    let context = `<h3>${format(test.name, 160)}</h3>\n` +
       `<p>Test ID: <code>${identifier(test.testId, format)}</code>; type: ${format(test.type, 40)}; rule: ${format(test.executionRule, 40)}.<br>` +
       `Target: <code>${format(targetText(test.target), 2048)}</code></p>\n`;
-    if (typeof test.message === 'string' && test.message) details += `<p>${format(test.message)}</p>\n`;
-    if (selected.length) {
-      const rows = selected.map(value => {
-        const agent = record(value) ? value : {};
-        const href = resultURL(agent.url, token);
-        return [
+    if (typeof test.message === 'string' && test.message) context += `<p>${format(test.message)}</p>\n`;
+    const rows = selected.map(value => {
+      const agent = record(value) ? value : {};
+      const href = resultURL(agent.url, token);
+      return {
+        status: agent.status,
+        cells: [
           `<code>${identifier(test.testId, format)}</code>`, format(test.name, 160),
           `<code>${format(targetText(test.target), 2048)}</code>`,
           `${format(agent.agentName, 160)}<br>ID: ${identifier(agent.agentId, format)}`, identifier(agent.roundId, format),
           statusCell(agent.status, format), measurements(test.type, agent, format),
           format(agent.message, 240, 'No additional details'),
           href ? `<a href="${format(href, 512)}">View in ThousandEyes</a>` : 'Not provided'
-        ];
-      });
-      details += table(['Test ID', 'Test', 'Target', 'Agent', 'Round', 'Status', 'Measurements', 'Details', 'Results'], rows);
-    } else if (agents.length === 0) {
-      details += '<p>Agent results: Not reported.</p>\n';
-    }
-    if (selected.length < agents.length) {
-      details += `<p>Showing ${selected.length} of ${agents.length} agents. See the full JSON/JUnit reports for all results.</p>\n`;
-    }
-  }
-  if (remainingRows === 0) details += `<p>The summary is limited to ${MAX_AGENT_ROWS} agent rows overall.</p>\n`;
-  const summary = overview + details;
-  return Buffer.byteLength(summary, 'utf8') <= MAX_SUMMARY_BYTES ? summary : overview +
-    '<p>Agent details were omitted to stay within the summary size limit. See the full JSON/JUnit reports.</p>\n';
+        ]
+      };
+    });
+    return { context, agents, rows };
+  });
+  const suffix = remainingRows === 0 ? `<p>The summary is limited to ${MAX_AGENT_ROWS} agent rows overall.</p>\n` : '';
+  return boundedSummary(overview, prefix, plans, suffix);
 }
 
 async function writeSummary(core, report, exitCode, counts, token = '') {
