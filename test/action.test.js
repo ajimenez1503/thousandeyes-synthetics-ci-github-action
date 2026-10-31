@@ -101,11 +101,21 @@ function summaryLinks(result) {
     .map((match) => new URL(match[2].replaceAll('&amp;', '&')));
 }
 
+function summaryTables(result) {
+  const text = value => value.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  return [...result.summary.matchAll(/<table\b[^>]*>[\s\S]*?<\/table>/g)].map(match => {
+    const table = match[0];
+    const headers = [...table.matchAll(/<th\b[^>]*>([\s\S]*?)<\/th>/g)].map(cell => text(cell[1]));
+    const rows = [...table.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)]
+      .map(row => [...row[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map(cell => text(cell[1])))
+      .filter(row => row.length);
+    return { headers, rows };
+  });
+}
+
 function agentCells(result) {
-  const tables = [...result.summary.matchAll(/<table\b[^>]*>[\s\S]*?<\/table>/g)]
-    .map(match => match[0]).filter(table => /<th\b[^>]*>Agent<\/th>/.test(table));
-  return tables.flatMap(table => [...table.matchAll(/<tr\b[^>]*>\s*<td\b[^>]*>([\s\S]*?)<\/td>/g)]
-    .map(match => match[1].replace(/<[^>]*>/g, ' ')));
+  return summaryTables(result).filter(table => table.headers.includes('Agent'))
+    .flatMap(table => table.rows.map(row => row[table.headers.indexOf('Agent')]));
 }
 
 test('entrypoint executes the CLI safely and exposes durable report paths and test counts', async (t) => {
@@ -188,6 +198,18 @@ test('summary includes run timing, test identities, agent measurements, and appr
   assert.match(text, /Finished:/);
   assert.ok(text.includes('2026-10-29T10:00:00'));
   assert.ok(text.includes('2026-10-29T10:00:01'));
+  const [overview, ...agentTables] = summaryTables(result);
+  assert.deepEqual(overview.headers, ['Test ID', 'Test', 'Type', 'Execution rule', 'Status']);
+  assert.deepEqual(overview.rows.map(row => row.slice(0, 2)), [['1001', 'detailed-http'], ['1002', 'detailed-network']]);
+  assert.equal(agentTables.length, 2);
+  for (const table of agentTables) {
+    assert.deepEqual(table.headers, ['Test ID', 'Test', 'Target', 'Agent', 'Round', 'Status', 'Measurements', 'Details', 'Results']);
+  }
+  assert.deepEqual(agentTables[0].rows.map(row => row.slice(0, 3)), [
+    ['1001', 'detailed-http', 'https://demo.example.com/health'],
+    ['1001', 'detailed-http', 'https://demo.example.com/health']
+  ], 'each agent row retains its parent test context');
+  assert.deepEqual(agentTables[1].rows.map(row => row.slice(0, 3)), [['1002', 'detailed-network', 'demo.example.com:443']]);
   assert.match(text, /Target:\s*https:\/\/demo\.example\.com\/health/);
   assert.match(text, /Target:\s*demo\.example\.com:443/);
   const cells = agentCells(result);
@@ -221,12 +243,40 @@ test('summary includes run timing, test identities, agent measurements, and appr
   assertNoRawChildLogs(result);
 });
 
+test('overview and agent statuses retain labels with visible color symbols', async (t) => {
+  const f = await fixture(t);
+  const result = await f.run({ FIXTURE_CASE: 'status-colors', FIXTURE_EXIT_CODE: '7' });
+  assert.equal(result.status, 7, result.visibleLog);
+  const [overview, ...agentTables] = summaryTables(result);
+  const expected = ['🟢 passed', '🔴 failed', '⚪ skipped', '🟠 timed-out', '🔴 error'];
+  assert.deepEqual(overview.rows.map(row => row[overview.headers.indexOf('Status')]), expected);
+  const agentStatuses = agentTables.flatMap(table => table.rows.map(row => row[table.headers.indexOf('Status')]));
+  for (const status of [...expected, '🟡 pending', '⚪ Not reported']) {
+    assert.ok(agentStatuses.includes(status), `agent status ${status} remains visible with its label`);
+  }
+  const rendered = new HtmlRenderer().render(new Parser().parse(result.summary));
+  for (const status of expected) assert.ok(rendered.includes(status), `${status} survives Markdown rendering`);
+  assert.equal(result.outputs.passed, '1');
+  assert.equal(result.outputs.failed, '1');
+  assert.equal(result.outputs.skipped, '1');
+  assert.equal(result.outputs['timed-out'], '1');
+  assert.equal(result.outputs.errors, '1');
+  assert.equal(result.outputs['exit-code'], '7');
+  assertNoRawChildLogs(result);
+});
+
 test('legacy v1 reports explicitly mark absent target and agent names while retaining numeric IDs', async (t) => {
   const f = await fixture(t);
   const result = await f.run();
   assert.equal(result.status, 0, result.visibleLog);
   assert.equal(result.outputs.passed, '2');
   assert.match(summaryText(result), /Target:\s*Not reported/);
+  const [overview, ...agentTables] = summaryTables(result);
+  assert.ok(overview.rows.every(row => row[overview.headers.indexOf('Test ID')] === 'Not reported'));
+  for (const table of agentTables) {
+    assert.ok(table.rows.every(row => row[table.headers.indexOf('Test ID')] === 'Not reported'));
+    assert.ok(table.rows.every(row => row[table.headers.indexOf('Target')] === 'Not reported'));
+  }
   const cells = agentCells(result);
   assert.equal(cells.length, 2);
   assert.ok(cells.every(cell => /Not reported/.test(cell) && /\b6\b/.test(cell)));

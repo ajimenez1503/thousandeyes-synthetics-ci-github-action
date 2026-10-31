@@ -28,6 +28,14 @@ if (process.env.FIXTURE_CASE === 'all-statuses') {
     check('optional failure', 'failed', 'non-blocking'), check('ignored', 'skipped'),
     check('late', 'timed-out'), check('broken', 'error')];
 }
+if (process.env.FIXTURE_CASE === 'status-colors') {
+  tests = ['passed', 'failed', 'skipped', 'timed-out', 'error'].map((status, index) => ({
+    ...check(`status-${status}`, status), testId: String(4001 + index), target: 'https://demo.example.com/health',
+    agents: [agent(status), ...(status === 'timed-out' ? [
+      { agentId: '7', status: 'pending' }, { agentId: '8', status: 'unknown' }
+    ] : [])]
+  }));
+}
 if (process.env.FIXTURE_CASE === 'unsafe-name') {
   tests = [check('<script>alert("x")</script> | ::error:: forged', 'passed')];
 }
@@ -107,7 +115,7 @@ if (process.env.FIXTURE_CASE === 'unsafe-links') {
 }
 if (process.env.FIXTURE_CASE === 'malformed-details') {
   tests = [{
-    ...check('malformed-agent-details', 'passed'), target: { hidden: process.env.TE_TOKEN }, message: { hidden: process.env.TE_TOKEN },
+    ...check('malformed-agent-details', 'passed'), testId: { hidden: process.env.TE_TOKEN }, target: { hidden: process.env.TE_TOKEN }, message: { hidden: process.env.TE_TOKEN },
     agents: [{
       agentId: '6', agentName: { hidden: process.env.TE_TOKEN }, status: 'passed',
       metrics: { responseCode: '401', responseTime: null, totalTime: 'NaN', unknown: 'DO_NOT_RENDER_UNKNOWN_METRIC' },

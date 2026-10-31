@@ -5,6 +5,7 @@ const MAX_SUMMARY_BYTES = 512 * 1024;
 const RESULT_HOSTS = new Set(['app.thousandeyes.com', 'app.thousandeyes.eu', 'app.thousandeyes.gov']);
 const PROBLEM_STATUSES = new Set(['failed', 'timed-out', 'error']);
 const AGENT_STATUSES = new Set(['passed', 'failed', 'skipped', 'timed-out', 'error', 'pending']);
+const STATUS_SYMBOLS = { passed: '🟢', failed: '🔴', skipped: '⚪', 'timed-out': '🟠', error: '🔴', pending: '🟡' };
 
 function record(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -34,6 +35,11 @@ function textFormatter(token) {
 function identifier(value, format) {
   const text = typeof value === 'string' ? value : Number.isSafeInteger(value) && value >= 0 ? String(value) : '';
   return format(/^\d{1,32}$/.test(text) ? text : '');
+}
+
+function statusCell(value, format) {
+  const status = AGENT_STATUSES.has(value) ? value : '';
+  return `${STATUS_SYMBOLS[status] || '⚪'} ${format(status, 40)}`;
 }
 
 function timestamp(value) {
@@ -153,8 +159,9 @@ function buildSummary(report, exitCode, counts, token) {
     `Finished: ${finished === null ? 'Not reported' : format(new Date(finished).toISOString(), 40)}</p>\n` +
     `<p>Passed: ${counts.passed}; failed: ${counts.failed}; non-blocking failures: ${counts['non-blocking-failed']}; ` +
     `skipped: ${counts.skipped}; timed out: ${counts['timed-out']}; errors: ${counts.errors}.</p>\n` +
-    table(['Test', 'Type', 'Execution rule', 'Status'], report.tests.map(test => [
-      format(test.name, 160), format(test.type, 40), format(test.executionRule, 40), format(test.status, 40)
+    table(['Test ID', 'Test', 'Type', 'Execution rule', 'Status'], report.tests.map(test => [
+      `<code>${identifier(test.testId, format)}</code>`, format(test.name, 160), format(test.type, 40),
+      format(test.executionRule, 40), statusCell(test.status, format)
     ]));
 
   const tests = prioritized(report.tests, MAX_DETAIL_TESTS);
@@ -173,13 +180,15 @@ function buildSummary(report, exitCode, counts, token) {
         const agent = record(value) ? value : {};
         const href = resultURL(agent.url, token);
         return [
+          `<code>${identifier(test.testId, format)}</code>`, format(test.name, 160),
+          `<code>${format(targetText(test.target), 2048)}</code>`,
           `${format(agent.agentName, 160)}<br>ID: ${identifier(agent.agentId, format)}`, identifier(agent.roundId, format),
-          format(AGENT_STATUSES.has(agent.status) ? agent.status : ''), measurements(test.type, agent, format),
+          statusCell(agent.status, format), measurements(test.type, agent, format),
           format(agent.message, 240, 'No additional details'),
           href ? `<a href="${format(href, 512)}">View in ThousandEyes</a>` : 'Not provided'
         ];
       });
-      details += table(['Agent', 'Round', 'Status', 'Measurements', 'Details', 'Results'], rows);
+      details += table(['Test ID', 'Test', 'Target', 'Agent', 'Round', 'Status', 'Measurements', 'Details', 'Results'], rows);
     } else if (agents.length === 0) {
       details += '<p>Agent results: Not reported.</p>\n';
     }
