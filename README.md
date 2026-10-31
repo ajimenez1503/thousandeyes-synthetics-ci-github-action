@@ -68,9 +68,13 @@ Downloaded archives are checked against the release SHA-256 manifest before extr
 | `passed`, `failed`, `skipped`, `timed-out`, `errors` | Counts of suite tests with each outcome, not agent counts. |
 | `non-blocking-failed` | Subset of `failed` with the non-blocking rule. |
 
-The job summary includes run timestamps and duration, the test overview, each test's sanitized target, and per-test agent tables with names and test/agent/round IDs, HTTP status and timings, network loss/RTT/jitter, failure messages, and approved ThousandEyes result links when the report provides them. Missing metadata and measurements are shown as `Not reported`. The summary uses the CLI report and does not read target credentials or native request payloads from the suite. Targets are displayed as text; HTTP user information, query strings, and fragments are removed.
+The job summary includes run timestamps and duration, a test overview with test IDs, and per-test agent tables. Each agent row includes its test ID, test name, sanitized target, agent name/ID, round ID, HTTP status and timings or network loss/RTT/jitter, failure messages, and approved ThousandEyes result links when the report provides them. Missing metadata and measurements are shown as `Not reported`. The summary uses the CLI report and does not read target credentials or native request payloads from the suite. Targets are displayed as text; HTTP user information, query strings, and fragments are removed.
+
+Both tables show status text with a colored symbol: 🟢 passed, 🔴 failed/error, 🟠 timed-out, ⚪ skipped, and 🟡 pending. Unknown agent status remains explicitly unavailable.
 
 The pinned [`0.0.2-next` CLI release](https://github.com/ajimenez1503/thousandeyes-cli/releases/tag/0.0.2-next) includes the optional version 1 `agentName` and `target` report fields. Older reports remain supported and show `Not reported` for unavailable metadata.
+
+When agent details exceed the summary size limit, the Action retains test context and prioritizes failure rows across tests before passing rows. Omission notices show how many agents are displayed; the JSON and JUnit reports retain all results.
 
 Detailed tables reserve rows for failed, timed-out, and errored agents across selected tests before displaying passing agents. Details are bounded to 20 tests, 20 agents per test, and 100 agent rows overall. Control characters and line separators are removed before token redaction, truncation, and HTML escaping so report values remain text. Omission notices point readers to the full JSON/JUnit artifacts. Completed run summaries do not change when the Action is updated; start a new run using the new Action commit to see the enhanced summary.
 

@@ -28,6 +28,14 @@ if (process.env.FIXTURE_CASE === 'all-statuses') {
     check('optional failure', 'failed', 'non-blocking'), check('ignored', 'skipped'),
     check('late', 'timed-out'), check('broken', 'error')];
 }
+if (process.env.FIXTURE_CASE === 'status-colors') {
+  tests = ['passed', 'failed', 'skipped', 'timed-out', 'error'].map((status, index) => ({
+    ...check(`status-${status}`, status), testId: String(4001 + index), target: 'https://demo.example.com/health',
+    agents: [agent(status), ...(status === 'timed-out' ? [
+      { agentId: '7', status: 'pending' }, { agentId: '8', status: 'unknown' }
+    ] : [])]
+  }));
+}
 if (process.env.FIXTURE_CASE === 'unsafe-name') {
   tests = [check('<script>alert("x")</script> | ::error:: forged', 'passed')];
 }
@@ -107,7 +115,7 @@ if (process.env.FIXTURE_CASE === 'unsafe-links') {
 }
 if (process.env.FIXTURE_CASE === 'malformed-details') {
   tests = [{
-    ...check('malformed-agent-details', 'passed'), target: { hidden: process.env.TE_TOKEN }, message: { hidden: process.env.TE_TOKEN },
+    ...check('malformed-agent-details', 'passed'), testId: { hidden: process.env.TE_TOKEN }, target: { hidden: process.env.TE_TOKEN }, message: { hidden: process.env.TE_TOKEN },
     agents: [{
       agentId: '6', agentName: { hidden: process.env.TE_TOKEN }, status: 'passed',
       metrics: { responseCode: '401', responseTime: null, totalTime: 'NaN', unknown: 'DO_NOT_RENDER_UNKNOWN_METRIC' },
@@ -143,6 +151,22 @@ if (process.env.FIXTURE_CASE === 'failure-priority') {
       metrics: { responseCode: 503 }
     }]
   });
+}
+if (['byte-budget-details', 'byte-budget-global-failures'].includes(process.env.FIXTURE_CASE)) {
+  const eachFailed = process.env.FIXTURE_CASE === 'byte-budget-global-failures';
+  tests = Array.from({ length: 5 }, (_, index) => ({
+    ...check(`byte-budget-check-${index}`, eachFailed || index === 4 ? 'failed' : 'passed'),
+    testId: String(5001 + index), target: 'https://demo.example.com/' + '&'.repeat(1900) + `/test-${index}`,
+    agents: Array.from({ length: 20 }, (_, row) => {
+      const failed = (eachFailed || index === 4) && row === 19;
+      return {
+        agentId: String(row + 1), agentName: `Byte-agent-${index}-${row}`, roundId: '1700000000',
+        status: failed ? 'failed' : 'passed',
+        message: failed ? `Byte-budget-failure${eachFailed ? `-${index}` : ''}: HTTP 503; expected 200` : `Budget-pass-${index}-${row}`,
+        metrics: { responseCode: failed ? 503 : 200, responseTime: 10, totalTime: 20 }
+      };
+    })
+  }));
 }
 if (['global-failure-priority', 'global-failure-overflow'].includes(process.env.FIXTURE_CASE)) {
   const allFailed = process.env.FIXTURE_CASE === 'global-failure-overflow';

@@ -101,11 +101,21 @@ function summaryLinks(result) {
     .map((match) => new URL(match[2].replaceAll('&amp;', '&')));
 }
 
+function summaryTables(result) {
+  const text = value => value.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  return [...result.summary.matchAll(/<table\b[^>]*>[\s\S]*?<\/table>/g)].map(match => {
+    const table = match[0];
+    const headers = [...table.matchAll(/<th\b[^>]*>([\s\S]*?)<\/th>/g)].map(cell => text(cell[1]));
+    const rows = [...table.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)]
+      .map(row => [...row[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map(cell => text(cell[1])))
+      .filter(row => row.length);
+    return { headers, rows };
+  });
+}
+
 function agentCells(result) {
-  const tables = [...result.summary.matchAll(/<table\b[^>]*>[\s\S]*?<\/table>/g)]
-    .map(match => match[0]).filter(table => /<th\b[^>]*>Agent<\/th>/.test(table));
-  return tables.flatMap(table => [...table.matchAll(/<tr\b[^>]*>\s*<td\b[^>]*>([\s\S]*?)<\/td>/g)]
-    .map(match => match[1].replace(/<[^>]*>/g, ' ')));
+  return summaryTables(result).filter(table => table.headers.includes('Agent'))
+    .flatMap(table => table.rows.map(row => row[table.headers.indexOf('Agent')]));
 }
 
 test('entrypoint executes the CLI safely and exposes durable report paths and test counts', async (t) => {
@@ -188,6 +198,18 @@ test('summary includes run timing, test identities, agent measurements, and appr
   assert.match(text, /Finished:/);
   assert.ok(text.includes('2026-10-29T10:00:00'));
   assert.ok(text.includes('2026-10-29T10:00:01'));
+  const [overview, ...agentTables] = summaryTables(result);
+  assert.deepEqual(overview.headers, ['Test ID', 'Test', 'Type', 'Execution rule', 'Status']);
+  assert.deepEqual(overview.rows.map(row => row.slice(0, 2)), [['1001', 'detailed-http'], ['1002', 'detailed-network']]);
+  assert.equal(agentTables.length, 2);
+  for (const table of agentTables) {
+    assert.deepEqual(table.headers, ['Test ID', 'Test', 'Target', 'Agent', 'Round', 'Status', 'Measurements', 'Details', 'Results']);
+  }
+  assert.deepEqual(agentTables[0].rows.map(row => row.slice(0, 3)), [
+    ['1001', 'detailed-http', 'https://demo.example.com/health'],
+    ['1001', 'detailed-http', 'https://demo.example.com/health']
+  ], 'each agent row retains its parent test context');
+  assert.deepEqual(agentTables[1].rows.map(row => row.slice(0, 3)), [['1002', 'detailed-network', 'demo.example.com:443']]);
   assert.match(text, /Target:\s*https:\/\/demo\.example\.com\/health/);
   assert.match(text, /Target:\s*demo\.example\.com:443/);
   const cells = agentCells(result);
@@ -221,12 +243,40 @@ test('summary includes run timing, test identities, agent measurements, and appr
   assertNoRawChildLogs(result);
 });
 
+test('overview and agent statuses retain labels with visible color symbols', async (t) => {
+  const f = await fixture(t);
+  const result = await f.run({ FIXTURE_CASE: 'status-colors', FIXTURE_EXIT_CODE: '7' });
+  assert.equal(result.status, 7, result.visibleLog);
+  const [overview, ...agentTables] = summaryTables(result);
+  const expected = ['🟢 passed', '🔴 failed', '⚪ skipped', '🟠 timed-out', '🔴 error'];
+  assert.deepEqual(overview.rows.map(row => row[overview.headers.indexOf('Status')]), expected);
+  const agentStatuses = agentTables.flatMap(table => table.rows.map(row => row[table.headers.indexOf('Status')]));
+  for (const status of [...expected, '🟡 pending', '⚪ Not reported']) {
+    assert.ok(agentStatuses.includes(status), `agent status ${status} remains visible with its label`);
+  }
+  const rendered = new HtmlRenderer().render(new Parser().parse(result.summary));
+  for (const status of expected) assert.ok(rendered.includes(status), `${status} survives Markdown rendering`);
+  assert.equal(result.outputs.passed, '1');
+  assert.equal(result.outputs.failed, '1');
+  assert.equal(result.outputs.skipped, '1');
+  assert.equal(result.outputs['timed-out'], '1');
+  assert.equal(result.outputs.errors, '1');
+  assert.equal(result.outputs['exit-code'], '7');
+  assertNoRawChildLogs(result);
+});
+
 test('legacy v1 reports explicitly mark absent target and agent names while retaining numeric IDs', async (t) => {
   const f = await fixture(t);
   const result = await f.run();
   assert.equal(result.status, 0, result.visibleLog);
   assert.equal(result.outputs.passed, '2');
   assert.match(summaryText(result), /Target:\s*Not reported/);
+  const [overview, ...agentTables] = summaryTables(result);
+  assert.ok(overview.rows.every(row => row[overview.headers.indexOf('Test ID')] === 'Not reported'));
+  for (const table of agentTables) {
+    assert.ok(table.rows.every(row => row[table.headers.indexOf('Test ID')] === 'Not reported'));
+    assert.ok(table.rows.every(row => row[table.headers.indexOf('Target')] === 'Not reported'));
+  }
   const cells = agentCells(result);
   assert.equal(cells.length, 2);
   assert.ok(cells.every(cell => /Not reported/.test(cell) && /\b6\b/.test(cell)));
@@ -353,6 +403,66 @@ test('bounded details prioritize a late failed test and its late failed agent', 
   const headings = [...result.summary.matchAll(/<h3>(.*?)<\/h3>/g)].map(match => match[1]);
   assert.equal(headings[0], 'late-blocking-problem', 'a failed test after 25 passes gets detailed first');
   assert.ok(result.summary.includes('Critical-agent-measurement-failure'), 'a failed agent after 25 passes remains visible');
+  assertNoRawChildLogs(result);
+});
+
+test('escaped repeated targets keep failure details and accurate omissions within the byte budget', async (t) => {
+  const f = await fixture(t);
+  const result = await f.run({ FIXTURE_CASE: 'byte-budget-details', FIXTURE_EXIT_CODE: '1' });
+  assert.equal(result.status, 1, result.visibleLog);
+  assert.equal(result.outputs.passed, '4');
+  assert.equal(result.outputs.failed, '1');
+  assert.equal(result.outputs['exit-code'], '1');
+  assert.ok(Buffer.byteLength(result.summary, 'utf8') <= 512 * 1024);
+  assert.ok(result.summary.includes('Byte-budget-failure: HTTP 503; expected 200'), 'a late failed agent keeps its diagnostic');
+  const [overview, ...agentTables] = summaryTables(result);
+  assert.equal(overview.rows.length, 5, 'overview counts and identities remain complete');
+  const rows = agentTables.flatMap(table => table.rows);
+  assert.ok(rows.length > 1 && rows.length < 100, 'some passing rows fit while excess rows are omitted');
+  assert.ok(rows.some(row => row[5] === '🟢 passed'));
+  assert.ok(rows.some(row => row[5] === '🔴 failed' && /HTTP status: 503/.test(row[6])));
+  for (const table of agentTables) {
+    assert.deepEqual(table.headers.slice(0, 3), ['Test ID', 'Test', 'Target']);
+    for (const row of table.rows) {
+      const index = Number(row[0]) - 5001;
+      assert.equal(row[1], `byte-budget-check-${index}`);
+      assert.equal(row[2], 'https://demo.example.com/' + '&amp;'.repeat(1900) + `/test-${index}`);
+    }
+  }
+  let notices = 0;
+  const sections = result.summary.split('<h3>').slice(1);
+  assert.equal(sections.length, 5, 'all selected test contexts remain available');
+  for (const section of sections) {
+    const displayed = summaryTables({ summary: section }).reduce((total, table) => total + table.rows.length, 0);
+    if (displayed < 20) {
+      assert.match(summaryText({ summary: section }), new RegExp(`Showing\\s+${displayed}\\s+of\\s+20\\s+agents`));
+      notices++;
+    }
+  }
+  assert.ok(notices > 0, 'every shortened table reports its actual displayed count');
+  assertNoRawChildLogs(result);
+});
+
+test('summary byte budget retains failures across tests before passing rows', async (t) => {
+  const f = await fixture(t);
+  const result = await f.run({ FIXTURE_CASE: 'byte-budget-global-failures', FIXTURE_EXIT_CODE: '1' });
+  assert.equal(result.status, 1, result.visibleLog);
+  assert.equal(result.outputs.failed, '5');
+  assert.equal(result.outputs.passed, '0');
+  assert.equal(result.outputs['exit-code'], '1');
+  assert.ok(Buffer.byteLength(result.summary, 'utf8') <= 512 * 1024);
+  const [overview, ...agentTables] = summaryTables(result);
+  assert.equal(overview.rows.length, 5);
+  assert.equal(agentTables.length, 5, 'all five failed tests retain an agent table');
+  for (let index = 0; index < 5; index++) {
+    const failure = agentTables[index].rows.find(row => row[5] === '🔴 failed');
+    assert.ok(failure, `later failed test ${index} receives bytes before earlier passing agents`);
+    assert.equal(failure[0], String(5001 + index));
+    assert.ok(failure[7].includes(`Byte-budget-failure-${index}: HTTP 503; expected 200`));
+  }
+  const rows = agentTables.flatMap(table => table.rows);
+  assert.ok(rows.length > 5 && rows.length < 100, 'passing rows fill the remaining space within the cap');
+  assert.match(summaryText(result), /Some agent rows were omitted.*prioritizing failures/);
   assertNoRawChildLogs(result);
 });
 
